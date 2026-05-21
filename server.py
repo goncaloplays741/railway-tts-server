@@ -1,48 +1,40 @@
-import io, json, os, tempfile, wave
+import os, asyncio, json, traceback, tempfile
 from flask import Flask, request, send_file
-import piper
-import threading
+import edge_tts
 app = Flask(__name__)
-lock = threading.Lock()
-cache = {}
-def get_voice(lang):
-    if lang not in cache:
-        m = {
-            'pt-BR':'pt_BR-faber-medium',
-            'pt-PT':'pt_PT-tugão-medium',
-            'en-US':'en_US-less-medium',
-            'en-GB':'en_GB-alan-medium',
-            'es-ES':'es_ES-sharvard-medium',
-            'fr-FR':'fr_FR-siwis-medium',
-            'de-DE':'de_DE-thorsten-medium',
-            'it-IT':'it_IT-riccardo-medium',
-            'ru-RU':'ru_RU-irina-medium',
-            'zh-CN':'zh_CN-xiaohan-medium',
-            'ja-JP':'ja_JP-kurenai-medium',
-            'ko-KR':'ko_KR-jina-medium',
-        }
-        name = m.get(lang, 'en_US-less-medium')
-        url = f'https://huggingface.co/rhasspy/piper-voices/resolve/main/{name}.onnx'
-        cache[lang] = piper.load_voice(url)
-    return cache[lang]
 @app.route('/tts', methods=['POST'])
 def tts():
-    data = request.get_json(force=True)
-    text = data.get('text','')[:500]
-    lang = data.get('lang','en-US')
-    if not text:
-        return {'erro':'texto vazio'},400
-    with lock:
-        voz = get_voice(lang)
-        buf = io.BytesIO()
-        with wave.open(buf,'wb') as w:
-            w.setnchannels(1)
-            w.setsampwidth(2)
-            w.setframerate(22050)
-            for audio in piper.synthesize(text, voz):
-                w.writeframes(audio)
-        buf.seek(0)
-    return send_file(buf, mimetype='audio/wav')
+    try:
+        data = request.get_json(force=True)
+        text = data.get('text', '')[:500]
+        lang = data.get('lang', 'en-US')
+        vozes = {
+            'pt-BR':'pt-BR-FranciscaNeural','pt-PT':'pt-PT-RaquelNeural',
+            'en-US':'en-US-JennyNeural','en-GB':'en-GB-LibbyNeural',
+            'es-ES':'es-ES-ElviraNeural','es-MX':'es-MX-DaliaNeural',
+            'fr-FR':'fr-FR-DeniseNeural','de-DE':'de-DE-KatjaNeural',
+            'it-IT':'it-IT-ElsaNeural','ja-JP':'ja-JP-NanamiNeural',
+            'ko-KR':'ko-KR-SunHiNeural','zh-CN':'zh-CN-XiaoxiaoNeural',
+            'ru-RU':'ru-RU-SvetlanaNeural','hi-IN':'hi-IN-SwaraNeural',
+            'ar-SA':'ar-SA-ZariyahNeural','nl-NL':'nl-NL-ColetteNeural',
+            'tr-TR':'tr-TR-EmelNeural','pl-PL':'pl-PL-AgnieszkaNeural',
+        }
+        voz = vozes.get(lang, 'en-US-JennyNeural')
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        async def synth():
+            c = edge_tts.Communicate(text, voz)
+            f = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3')
+            async for chunk in c.stream():
+                if chunk["type"] == "audio":
+                    f.write(chunk["data"])
+            f.close()
+            return f.name
+        path = loop.run_until_complete(synth())
+        loop.close()
+        return send_file(path, mimetype='audio/mpeg')
+    except Exception as e:
+        return {'erro': str(e), 'trace': traceback.format_exc()}, 500
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
