@@ -1,2 +1,2 @@
 flask
-piper-tts
+requests
